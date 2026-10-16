@@ -1,0 +1,115 @@
+import json
+import streamlit as st
+from openai import AzureOpenAI
+
+# Configuração da Página
+st.set_page_config(
+    page_title="HelpDesk TI // Auto-Atendimento Inteligente",
+    page_icon="🤖",
+    layout="centered",
+)
+
+# Estilização visual (Tema Cyber/Tech corporativo)
+st.markdown(
+    """
+    <style>
+    .stApp { background-color: #0f172a; color: #38bdf8; }
+    h1, h2, h3 { color: #38bdf8 !important; font-family: 'Segoe UI', sans-serif; }
+    .stTextArea textarea, .stTextInput input { background-color: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155 !important; }
+    .stButton button { background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%) !important; color: #0f172a !important; font-weight: bold !important; border: none !important; }
+    div[data-testid="stMetric"] { background-color: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 8px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Configuração do Cliente Azure OpenAI (ou fallback para demonstração)
+def obter_cliente_azure():
+  try:
+    api_key = st.secrets["AZURE_OPENAI_API_KEY"]
+    endpoint = st.secrets["AZURE_OPENAI_ENDPOINT"]
+    deployment = st.secrets.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
+  except Exception:
+    # Fallback de demonstração (substitua pelas suas chaves reais ou configure no secrets.toml)
+    api_key = "SUA_API_KEY_AQUI"
+    endpoint = "https://seu-recurso.services.ai.azure.com/"
+    deployment = "gpt-4.1-mini"
+
+  return AzureOpenAI(api_key=api_key, api_version="2024-02-01", azure_endpoint=endpoint), deployment
+
+# Interface Principal
+st.title("🖥️ Central de Atendimento TI - Auto-HelpDesk")
+st.markdown("<span style='color: #94a3b8;'>Descreva seu problema ou solicitação. O assistente fará a triagem automática, direcionará para a área correta e fornecerá documentação ou procedimento imediato.</span>", unsafe_allow_html=True)
+
+# Dados do Solicitante
+col_a, col_b = st.columns(2)
+with col_a:
+    nome_usuario = st.text_input("Seu Nome:", placeholder="Ex: Carlos Silva")
+with col_b:
+    email_usuario = st.text_input("E-mail / Ramal:", placeholder="carlos.silva@empresa.com")
+
+descricao_problema = st.text_area(
+    "Descrição da Solicitação / Problema:",
+    placeholder="Ex: Minha senha de rede expirou e não consigo acessar o sistema ERP da folha de pagamento.",
+    height=120
+)
+
+if st.button("🚀 Abrir Chamado e Consultar Base de Conhecimento", type="primary"):
+    if not nome_usuario.strip() or not descricao_problema.strip():
+        st.warning("⚠️ Por favor, preencha seu nome e a descrição do problema.")
+    else:
+        with st.spinner("🤖 Processando triagem inteligente e buscando documentação..."):
+            try:
+                client, deployment_name = obter_cliente_azure()
+                
+                system_prompt = (
+                    "Você é o agente de triagem automatizada de uma Central de TI corporativa.\n"
+                    "Analise o relato do usuário e classifique o chamado retornando ESTRITAMENTE um JSON válido com as seguintes chaves:\n"
+                    "1. 'area_responsavel': (string exata entre: 'Infraestrutura', 'Sistemas', 'Redes', 'IA')\n"
+                    "2. 'nivel_urgencia': (string: 'Baixo', 'Medio', 'Alto', 'Critico')\n"
+                    "3. 'resumo_chamado': (string resumindo o problema técnico)\n"
+                    "4. 'resposta_automatica': (string contendo um passo a passo técnico de auto-atendimento, troubleshooting inicial ou instrução direta para o usuário resolver o problema de imediato, caso aplicável)\n"
+                    "5. 'documento_recomendado': (string com o nome ou link de um procedimento/manual interno fictício útil para o caso, ex: 'Manual de Redefinição de Senhas de Rede v2.4')\n\n"
+                    "Retorne APENAS o JSON puro, sem blocos markdown de formatação extra."
+                )
+
+                response = client.chat.completions.create(
+                    model=deployment_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": descricao_problema}
+                    ],
+                    temperature=0.2,
+                )
+
+                conteudo = response.choices[0].message.content.strip()
+                if conteudo.startswith("```json"):
+                    conteudo = conteudo[7:]
+                if conteudo.endswith("```"):
+                    conteudo = conteudo[:-3]
+                
+                dados = json.loads(conteudo.strip())
+
+                # Exibição do Resultado Organizado
+                st.success("✅ Chamado registrado e triado com sucesso!")
+                st.divider()
+
+                col_res1, col_res2 = st.columns(2)
+                with col_res1:
+                    st.metric(label="📁 Área Responsável", value=dados.get("area_responsavel", "TI Geral"))
+                    st.metric(label="⚡ Nível de Urgência", value=dados.get("nivel_urgencia", "Medio"))
+                with col_res2:
+                    st.metric(label="👤 Solicitante", value=nome_usuario)
+                    st.metric(label="📌 Status", value="Aberto / Auto-Atendimento")
+
+                st.markdown("### 📚 Resposta Instantânea & Documentação Automática")
+                st.info(dados.get("resposta_automatica", "Nenhuma instrução automática gerada."))
+
+                if dados.get("documento_recomendado"):
+                    st.markdown(f"**📄 Documento / Procedimento Vinculado:** `{dados.get('documento_recomendado')}`")
+
+                st.markdown("---")
+                st.caption("O chamado foi encaminhado para a fila da equipe correspondente caso o auto-atendimento não tenha resolvido.")
+
+            except Exception as e:
+                st.error(f"Erro ao processar a solicitação com a IA: {e}")
